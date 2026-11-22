@@ -289,7 +289,7 @@ local function reopen(state)
             codes = codes and (`$codes;$code`) or code
         end
     end
-    return codes and ("\27[" .. `$(codes)m`)
+    return codes and `\27[$(codes)m`
 end
 
 -- Wrapping ---------------------------------------------------------------------
@@ -702,7 +702,7 @@ function Spinner:tick(text)
     end
     if self.tty then
         self.frame = self.frame % #self.frames + 1
-        self.stream:write(`\r$(self.frames[self.frame]) $(self.text)` .. "\27[K")
+        self.stream:write(`\r$(self.frames[self.frame]) $(self.text)\27[K`)
     elseif self.printed ~= self.text then
         self.printed = self.text
         self.stream:write(self.text .. "\n")
@@ -796,7 +796,7 @@ function Progress:update(value)
         local line = self:render()
         if line ~= self.drawn then
             self.drawn = line
-            self.stream:write(`\r$line` .. "\27[K")
+            self.stream:write(`\r$line\27[K`)
         end
         if finished then
             self.stream:write("\n")

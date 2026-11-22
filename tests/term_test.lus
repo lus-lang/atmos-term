@@ -114,11 +114,11 @@ local function wrap_wide_test()
 end
 
 local function wrap_ansi_test()
-    local text = `$(RED)hello world` .. "\27[39m"
-    assert(term.wrap(text, 5) == `$(RED)hello$RESET\n$RED` .. "world\27[39m")
+    local text = `$(RED)hello world\27[39m`
+    assert(term.wrap(text, 5) == `$(RED)hello$RESET\n$(RED)world\27[39m`)
     -- A style that ended before the break is left alone.
     assert(term.wrap(RED .. "hello\27[39m world", 5) == RED .. "hello\27[39m\nworld")
-    for _, line in ipairs({ "\27[1;31mhello" .. RESET, "\27[1;31mworld" .. RESET }) do
+    for _, line in ipairs({ `\27[1;31mhello$(RESET)`, `\27[1;31mworld$(RESET)` }) do
         assert(term.width(line) == 5)
     end
 end
@@ -129,9 +129,9 @@ local function wrap_ansi_state_test()
     local lines = term.wrap(text, 2):split("\n")
     assert(#lines == 4)
     assert(lines[1] == `$BOLD$(ORANGE)aa$RESET`)
-    assert(lines[2] == "\27[1;38;5;208mbb\27[22m" .. RESET)
-    assert(lines[3] == "\27[38;5;208mcc" .. RESET)
-    assert(lines[4] == "\27[38;5;208mdd" .. RESET)
+    assert(lines[2] == `\27[1;38;5;208mbb\27[22m$(RESET)`)
+    assert(lines[3] == `\27[38;5;208mcc$(RESET)`)
+    assert(lines[4] == `\27[38;5;208mdd$(RESET)`)
     -- The style also carries across the line breaks of the text.
     assert(term.wrap(`$(RED)a\nb$RESET`, 10) == `$(RED)a$RESET\n$(RED)b$RESET`)
 end
@@ -164,7 +164,7 @@ end
 local function truncate_ansi_test()
     local ELLIPSIS = "\u{2026}"
     assert(term.truncate(`$(RED)hello world$RESET`, 8) == `$(RED)hello w$ELLIPSIS$RESET`)
-    assert(term.truncate(`$(RED)hi$RESET there friend`, 8) == `$(RED)hi$RESET` .. " ther\u{2026}")
+    assert(term.truncate(`$(RED)hi$RESET there friend`, 8) == `$(RED)hi$RESET ther\u{2026}`)
     assert(term.truncate(`$(RED)hello$RESET`, 5) == `$(RED)hello$RESET`)
 end
 
@@ -245,7 +245,7 @@ local function table_width_test()
     for _, line in ipairs(lines) do
         assert(term.width(line) == 14)
     end
-    assert(lines[2] == "| \u{65e5}\u{672c} | " .. `$(RED)red$RESET |`)
+    assert(lines[2] == `| \u{65e5}\u{672c} | $(RED)red$RESET |`)
     assert(lines[4] == "| b    |     |")
 end
 

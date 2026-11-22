@@ -1,6 +1,6 @@
 local ROOT = string.match(TEST_DIR, "^(.*)[/\\][^/\\]*$")
-pledge("load", "fs:read=" .. ROOT .. "/*")
-package.path = ROOT .. "/?.lus;" .. package.path
+pledge("load", `fs:read=$ROOT/*`)
+package.path = `$ROOT/?.lus;$(package.path)`
 
 local term = require("term")
 
@@ -66,18 +66,18 @@ local function width_emoji_test()
 end
 
 local function width_ansi_test()
-    assert(term.width(RED .. "red" .. RESET) == 3)
+    assert(term.width(`$(RED)red$RESET`) == 3)
     assert(term.width("\27[38;2;255;136;0morange\27[39m") == 6)
     assert(term.width("\27[2K\27[1Gline") == 4)
     assert(term.width("\27]8;;https://lus.dev\27\\link\27]8;;\27\\") == 4)
     assert(term.width("\27]0;title\7text") == 4)
-    assert(term.width(RED .. "\u{65e5}\u{672c}" .. RESET) == 4)
+    assert(term.width(`$RED$("\u{65e5}\u{672c}")$RESET`) == 4)
 end
 
 local function strip_ansi_test()
     assert(term.strip_ansi("plain") == "plain")
-    assert(term.strip_ansi(RED .. "red" .. RESET) == "red")
-    assert(term.strip_ansi(BOLD .. RED .. "a" .. RESET .. "b") == "ab")
+    assert(term.strip_ansi(`$(RED)red$RESET`) == "red")
+    assert(term.strip_ansi(`$BOLD$(RED)a$(RESET)b`) == "ab")
     assert(term.strip_ansi("\27[38;5;208mx\27[39m") == "x")
     assert(term.strip_ansi("\27]8;;https://lus.dev\27\\link\27]8;;\27\\") == "link")
     assert(term.strip_ansi("\27[2J\27[Hhome\27M") == "home")
@@ -110,12 +110,12 @@ local function wrap_wide_test()
     assert(term.wrap("\u{65e5}\u{672c}", 1) == "\u{65e5}\n\u{672c}")
     -- An emoji sequence never splits.
     local family = "\u{1f469}\u{200d}\u{1f467}"
-    assert(term.wrap(family .. family .. family, 4) == family .. family .. "\n" .. family)
+    assert(term.wrap(family .. family .. family, 4) == `$family$family\n$family`)
 end
 
 local function wrap_ansi_test()
-    local text = RED .. "hello world" .. "\27[39m"
-    assert(term.wrap(text, 5) == RED .. "hello" .. RESET .. "\n" .. RED .. "world\27[39m")
+    local text = `$(RED)hello world` .. "\27[39m"
+    assert(term.wrap(text, 5) == `$(RED)hello$RESET\n$RED` .. "world\27[39m")
     -- A style that ended before the break is left alone.
     assert(term.wrap(RED .. "hello\27[39m world", 5) == RED .. "hello\27[39m\nworld")
     for _, line in ipairs({ "\27[1;31mhello" .. RESET, "\27[1;31mworld" .. RESET }) do
@@ -124,15 +124,16 @@ local function wrap_ansi_test()
 end
 
 local function wrap_ansi_state_test()
-    local text = BOLD .. "\27[38;5;208m" .. "aa bb" .. "\27[22m" .. " cc dd" .. RESET
+    local ORANGE, NORMAL = "\27[38;5;208m", "\27[22m"
+    local text = `$BOLD$(ORANGE)aa bb$NORMAL cc dd$RESET`
     local lines = term.wrap(text, 2):split("\n")
     assert(#lines == 4)
-    assert(lines[1] == BOLD .. "\27[38;5;208maa" .. RESET)
+    assert(lines[1] == `$BOLD$(ORANGE)aa$RESET`)
     assert(lines[2] == "\27[1;38;5;208mbb\27[22m" .. RESET)
     assert(lines[3] == "\27[38;5;208mcc" .. RESET)
     assert(lines[4] == "\27[38;5;208mdd" .. RESET)
     -- The style also carries across the line breaks of the text.
-    assert(term.wrap(RED .. "a\nb" .. RESET, 10) == RED .. "a" .. RESET .. "\n" .. RED .. "b" .. RESET)
+    assert(term.wrap(`$(RED)a\nb$RESET`, 10) == `$(RED)a$RESET\n$(RED)b$RESET`)
 end
 
 local function wrap_arguments_test()
@@ -161,9 +162,10 @@ local function truncate_wide_test()
 end
 
 local function truncate_ansi_test()
-    assert(term.truncate(RED .. "hello world" .. RESET, 8) == RED .. "hello w\u{2026}" .. RESET)
-    assert(term.truncate(RED .. "hi" .. RESET .. " there friend", 8) == RED .. "hi" .. RESET .. " ther\u{2026}")
-    assert(term.truncate(RED .. "hello" .. RESET, 5) == RED .. "hello" .. RESET)
+    local ELLIPSIS = "\u{2026}"
+    assert(term.truncate(`$(RED)hello world$RESET`, 8) == `$(RED)hello w$ELLIPSIS$RESET`)
+    assert(term.truncate(`$(RED)hi$RESET there friend`, 8) == `$(RED)hi$RESET` .. " ther\u{2026}")
+    assert(term.truncate(`$(RED)hello$RESET`, 5) == `$(RED)hello$RESET`)
 end
 
 local function pad_test()
@@ -172,7 +174,7 @@ local function pad_test()
     assert(term.pad("ab", 5, "center") == " ab  ")
     assert(term.pad("abcdef", 3) == "abcdef")
     assert(term.pad("\u{65e5}", 4) == "\u{65e5}  ")
-    assert(term.pad(RED .. "ab" .. RESET, 4) == RED .. "ab" .. RESET .. "  ")
+    assert(term.pad(`$(RED)ab$RESET`, 4) == `$(RED)ab$RESET  `)
 end
 
 -- Tables and boxes -------------------------------------------------------------
@@ -235,7 +237,7 @@ end
 local function table_width_test()
     -- Wide characters, colors, and line breaks keep the columns in line.
     local text = term.table({
-        { "\u{65e5}\u{672c}", RED .. "red" .. RESET },
+        { "\u{65e5}\u{672c}", `$(RED)red$RESET` },
         { "a\nb", "\u{1f600}" },
     }, { border = "ascii" })
     local lines = text:split("\n")
@@ -243,7 +245,7 @@ local function table_width_test()
     for _, line in ipairs(lines) do
         assert(term.width(line) == 14)
     end
-    assert(lines[2] == "| \u{65e5}\u{672c} | " .. RED .. "red" .. RESET .. " |")
+    assert(lines[2] == "| \u{65e5}\u{672c} | " .. `$(RED)red$RESET |`)
     assert(lines[4] == "| b    |     |")
 end
 
@@ -334,9 +336,9 @@ end
 
 local function progress_render_test()
     local bar = term.progress({ total = 10, width = 10, stream = recorder(false) })
-    assert(bar:render() == "[" .. string.rep("\u{2591}", 10) .. "] 0% 0/10")
+    assert(bar:render() == `[$(string.rep("\u{2591}", 10))] 0% 0/10`)
     bar:update(5)
-    assert(bar:render() == "[" .. string.rep("\u{2588}", 5) .. string.rep("\u{2591}", 5) .. "] 50% 5/10")
+    assert(bar:render() == `[$(string.rep("\u{2588}", 5))$(string.rep("\u{2591}", 5))] 50% 5/10`)
     bar:update(99)
     assert(bar.value == 10)
     local early = term.progress({ total = 3, stream = recorder(false) })

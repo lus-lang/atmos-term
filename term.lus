@@ -5,14 +5,15 @@
 --- marks as none, and ANSI escape sequences skipped. `term.wrap` and
 --- `term.truncate` fit text to a width and keep its colors across line
 --- breaks. `term.table` and `term.box` draw tables and boxes.
---- `term.spinner` and `term.progress` report progress. They redraw in
---- place on a terminal and write plain lines to a file or a pipe.
+--- `term.spinner` and `term.progress` report progress, redrawing in place
+--- on a terminal and writing plain lines to a file or a pipe.
 ---
---- Styled text comes from any source of ANSI escape sequences, such as the
---- `color` package.
+--- Every function that measures or lays out text skips ANSI escape sequences
+--- when it counts columns, so text styled by any source, such as the `color`
+--- package, lines up and keeps its colors.
 ---
 --- @package term
---- @version 0.1.0
+--- @version 1.0.0
 --- @lus 2.0
 --- @license 0BSD
 --- @repository https://github.com/lus-lang/atmos-term
@@ -285,10 +286,10 @@ local function reopen(state)
     local codes = nil
     for _, slot in ipairs(SLOTS) do
         if code = state[slot] then
-            codes = codes and (codes .. ";" .. code) or code
+            codes = codes and (`$codes;$code`) or code
         end
     end
-    return codes and ("\27[" .. codes .. "m")
+    return codes and ("\27[" .. `$(codes)m`)
 end
 
 -- Wrapping ---------------------------------------------------------------------
@@ -392,15 +393,15 @@ end
 
 local function check_width(value, name)
     if math.type(value) ~= "integer" or value < 1 then
-        error("bad argument #2 to '" .. name .. "' (positive integer expected)", 3)
+        error(`bad argument #2 to '$name' (positive integer expected)`, 3)
     end
 end
 
 --- Wraps text so that every line takes at most `width` columns.
 ---
---- Lines break at spaces, and the spaces at a break are dropped. A word
---- wider than the line breaks between characters. The line breaks and the
---- indentation of the text stay. A style that is active at a break is reset
+--- Lines break at spaces, which are dropped at the break. A word wider
+--- than the line breaks between characters. The text keeps its own line
+--- breaks and indentation. A style that is active at a break is reset
 --- at the end of the line and turned back on at the start of the next one,
 --- so a border or a prompt beside the text keeps its own colors.
 --- @param text string The text.
@@ -415,7 +416,7 @@ end
 ---
 --- Text that fits is returned as is. Longer text is cut between characters
 --- and ends with the ellipsis, which counts toward the width. The escape
---- sequences before the cut stay, and a style that is active at the cut is
+--- sequences before the cut stay. A style that is active at the cut is
 --- reset after the ellipsis.
 --- @param text string The text.
 --- @param width integer The largest width of the result, in columns.
@@ -516,7 +517,7 @@ end
 
 --- Draws rows of cells as a table and returns it as text.
 ---
---- Each row is a list of cells, and each cell is converted with `tostring`.
+--- Each row is a list of cells, which are converted with `tostring`.
 --- A column is as wide as its widest cell. A cell with line breaks, or one
 --- wrapped by `max_width`, takes several lines. Widths are measured in
 --- columns, so wide characters and colored text line up.
@@ -525,7 +526,7 @@ end
 --- @return string The table, without a final newline.
 function M.table(rows, options)
     if type(rows) ~= "table" then
-        error("bad argument #1 to 'table' (table expected, got " .. type(rows) .. ")", 2)
+        error(`bad argument #1 to 'table' (table expected, got $(type(rows)))`, 2)
     end
     local border = border_of(options, 3)
     local padding = options and options.padding or 1
@@ -605,7 +606,7 @@ end
 
 --- Draws a box around text and returns it as text.
 --- @param text string The content. It may hold several lines.
---- @param options table? `border` is a border style of `term.table`, `"single"` by default. `title` is written in the top edge. `width` is the largest width of the content, and longer lines wrap. `padding` is the number of spaces between the sides and the content, 1 by default. `align` is `"left"`, `"right"`, or `"center"`.
+--- @param options table? `border` is a border style of `term.table`, `"single"` by default. `title` is written in the top edge. `width` is the largest width of the content, beyond which lines wrap. `padding` is the number of spaces between the sides and the content, 1 by default. `align` is `"left"`, `"right"`, or `"center"`.
 --- @return string The box, without a final newline.
 function M.box(text, options)
     local border = border_of(options, 3) or BORDERS.single
@@ -620,7 +621,7 @@ function M.box(text, options)
     local top
     local span = inner + 2 * padding
     if title then
-        title = " " .. tostring(title) .. " "
+        title = ` $(tostring(title)) `
         local needed = measure(title) + 2
         if needed > span then
             inner = inner + needed - span
@@ -665,14 +666,15 @@ local FRAMES = {
 --- Returns a spinner, a one-line indicator of work in progress.
 ---
 --- On a terminal each `tick` redraws the line in place with the next frame.
---- On a file or a pipe the spinner writes its text as a plain line once,
---- and again whenever the text changes. The spinner has these methods.
+--- On a file or a pipe, `tick` writes the text as a plain line on the
+--- first call and whenever the text has changed. The spinner has these
+--- methods.
 ---
 --- - `spinner:tick(text)` shows the next frame. `text` replaces the text when given.
 --- - `spinner:stop(text)` clears the line, then writes `text` as a line when given.
 --- - `spinner:succeed(text)` stops with a check mark before the text, which defaults to the current text.
 --- - `spinner:fail(text)` stops with a cross before the text.
---- @param options table? `text` is the text beside the spinner. `frames` is the list of frames. `stream` is the file to write to, standard error by default, or any value with a `write` method. `tty` forces the terminal behavior on or off. The default asks the stream through `isatty`.
+--- @param options table? `text` is the text beside the spinner. `frames` is the list of frames. `stream` is the file to write to, standard error by default, or any value with a `write` method. `tty` forces the terminal behavior on or off. By default the spinner calls the `isatty` method of the stream when it has one.
 --- @return table
 function M.spinner(options)
     local stream, tty = stream_of(options)
@@ -700,7 +702,7 @@ function Spinner:tick(text)
     end
     if self.tty then
         self.frame = self.frame % #self.frames + 1
-        self.stream:write("\r" .. self.frames[self.frame] .. " " .. self.text .. "\27[K")
+        self.stream:write(`\r$(self.frames[self.frame]) $(self.text)` .. "\27[K")
     elseif self.printed ~= self.text then
         self.printed = self.text
         self.stream:write(self.text .. "\n")
@@ -736,10 +738,10 @@ Progress.__index = Progress
 --- Returns a progress bar for a known amount of work.
 ---
 --- On a terminal the bar redraws in place whenever its line changes, as in
---- `Copying [#####     ] 50% 5/10` with block characters, and ends with a
---- newline when the value reaches the total. On a file or a pipe it writes
---- a plain line such as `Copying 50% (5/10)` each time the percentage
---- passes another `step`. The bar has these methods.
+--- `Copying [##### ] 50% 5/10` with block characters, ending the line when
+--- the value reaches the total. On a file or a pipe it writes a plain line
+--- such as `Copying 50% (5/10)` each time the percentage passes another
+--- `step`. The bar has these methods.
 ---
 --- - `bar:tick(amount)` adds `amount` to the value, 1 by default.
 --- - `bar:update(value)` sets the value.
@@ -780,8 +782,8 @@ function Progress:render()
     local percent = math.floor(ratio * 100)
     local filled = math.floor(ratio * self.width)
     local prefix = self.label and (self.label .. " ") or ""
-    return prefix .. "[" .. string.rep(self.complete, filled) .. string.rep(self.incomplete, self.width - filled)
-        .. "] " .. percent .. "% " .. count_text(self.value) .. "/" .. count_text(self.total)
+    return `$prefix[$(string.rep(self.complete, filled))$(string.rep(self.incomplete, self.width - filled))]`
+        .. ` $percent% $(count_text(self.value))/$(count_text(self.total))`
 end
 
 function Progress:update(value)
@@ -794,7 +796,7 @@ function Progress:update(value)
         local line = self:render()
         if line ~= self.drawn then
             self.drawn = line
-            self.stream:write("\r" .. line .. "\27[K")
+            self.stream:write(`\r$line` .. "\27[K")
         end
         if finished then
             self.stream:write("\n")
@@ -805,7 +807,7 @@ function Progress:update(value)
         if mark > self.reported or finished then
             self.reported = mark
             local prefix = self.label and (self.label .. " ") or ""
-            self.stream:write(prefix .. percent .. "% (" .. count_text(self.value) .. "/" .. count_text(self.total) .. ")\n")
+            self.stream:write(`$prefix$percent% ($(count_text(self.value))/$(count_text(self.total)))\n`)
         end
     end
     self.done = finished

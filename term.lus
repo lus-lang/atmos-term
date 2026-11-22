@@ -1,0 +1,823 @@
+--- Measures and lays out text for a terminal.
+---
+--- `term.width` returns the number of columns that a string takes, with
+--- East Asian wide characters and emoji counted as two columns, combining
+--- marks as none, and ANSI escape sequences skipped. `term.wrap` and
+--- `term.truncate` fit text to a width and keep its colors across line
+--- breaks. `term.table` and `term.box` draw tables and boxes.
+--- `term.spinner` and `term.progress` report progress. They redraw in
+--- place on a terminal and write plain lines to a file or a pipe.
+---
+--- Styled text comes from any source of ANSI escape sequences, such as the
+--- `color` package.
+---
+--- @package term
+--- @version 0.1.0
+--- @lus 2.0
+--- @license 0BSD
+--- @repository https://github.com/lus-lang/atmos-term
+
+local M = {}
+
+-- Character widths -------------------------------------------------------------
+
+-- Pairs of first and last code points, sorted. These characters take no
+-- column: combining marks, format characters, and variation selectors.
+local ZERO = {
+    0x0300, 0x036F, 0x0483, 0x0489, 0x0591, 0x05BD, 0x05BF, 0x05BF, 0x05C1, 0x05C2, 0x05C4, 0x05C5,
+    0x05C7, 0x05C7, 0x0610, 0x061A, 0x064B, 0x065F, 0x0670, 0x0670, 0x06D6, 0x06DC, 0x06DF, 0x06E4,
+    0x06E7, 0x06E8, 0x06EA, 0x06ED, 0x0711, 0x0711, 0x0730, 0x074A, 0x07A6, 0x07B0, 0x07EB, 0x07F3,
+    0x0816, 0x0819, 0x081B, 0x0823, 0x0825, 0x0827, 0x0829, 0x082D, 0x0859, 0x085B, 0x08D3, 0x08E1,
+    0x08E3, 0x0902, 0x093A, 0x093A, 0x093C, 0x093C, 0x0941, 0x0948, 0x094D, 0x094D, 0x0951, 0x0957,
+    0x0962, 0x0963, 0x0981, 0x0981, 0x09BC, 0x09BC, 0x09C1, 0x09C4, 0x09CD, 0x09CD, 0x09E2, 0x09E3,
+    0x0A01, 0x0A02, 0x0A3C, 0x0A3C, 0x0A41, 0x0A42, 0x0A47, 0x0A48, 0x0A4B, 0x0A4D, 0x0A70, 0x0A71,
+    0x0A81, 0x0A82, 0x0ABC, 0x0ABC, 0x0AC1, 0x0AC5, 0x0AC7, 0x0AC8, 0x0ACD, 0x0ACD, 0x0B01, 0x0B01,
+    0x0B3C, 0x0B3C, 0x0B3F, 0x0B3F, 0x0B41, 0x0B44, 0x0B4D, 0x0B4D, 0x0B82, 0x0B82, 0x0BC0, 0x0BC0,
+    0x0BCD, 0x0BCD, 0x0C3E, 0x0C40, 0x0C46, 0x0C48, 0x0C4A, 0x0C4D, 0x0CBC, 0x0CBC, 0x0CCC, 0x0CCD,
+    0x0D41, 0x0D44, 0x0D4D, 0x0D4D, 0x0DCA, 0x0DCA, 0x0DD2, 0x0DD4, 0x0DD6, 0x0DD6, 0x0E31, 0x0E31,
+    0x0E34, 0x0E3A, 0x0E47, 0x0E4E, 0x0EB1, 0x0EB1, 0x0EB4, 0x0EBC, 0x0EC8, 0x0ECD, 0x0F18, 0x0F19,
+    0x0F35, 0x0F35, 0x0F37, 0x0F37, 0x0F39, 0x0F39, 0x0F71, 0x0F7E, 0x0F80, 0x0F84, 0x0F86, 0x0F87,
+    0x0F8D, 0x0FBC, 0x0FC6, 0x0FC6, 0x102D, 0x1030, 0x1032, 0x1037, 0x1039, 0x103A, 0x103D, 0x103E,
+    0x1058, 0x1059, 0x135D, 0x135F, 0x1160, 0x11FF, 0x1712, 0x1714, 0x1732, 0x1734, 0x17B4, 0x17B5,
+    0x17B7, 0x17BD, 0x17C6, 0x17C6, 0x17C9, 0x17D3, 0x180B, 0x180E, 0x18A9, 0x18A9, 0x1AB0, 0x1AFF,
+    0x1B00, 0x1B03, 0x1B34, 0x1B34, 0x1B36, 0x1B3A, 0x1B3C, 0x1B3C, 0x1B42, 0x1B42, 0x1B6B, 0x1B73,
+    0x1DC0, 0x1DFF, 0x200B, 0x200F, 0x2028, 0x202E, 0x2060, 0x2064, 0x2066, 0x206F, 0x20D0, 0x20F0,
+    0x2CEF, 0x2CF1, 0x2DE0, 0x2DFF, 0x302A, 0x302D, 0x3099, 0x309A, 0xA66F, 0xA672, 0xA674, 0xA67D,
+    0xA69E, 0xA69F, 0xA6F0, 0xA6F1, 0xA802, 0xA802, 0xA806, 0xA806, 0xA80B, 0xA80B, 0xA825, 0xA826,
+    0xA8E0, 0xA8F1, 0xFB1E, 0xFB1E, 0xFE00, 0xFE0F, 0xFE20, 0xFE2F, 0xFEFF, 0xFEFF, 0xFFF9, 0xFFFB,
+    0x1D167, 0x1D169, 0x1D173, 0x1D182, 0x1D185, 0x1D18B, 0x1D1AA, 0x1D1AD, 0x1F3FB, 0x1F3FF,
+    0xE0001, 0xE0001, 0xE0020, 0xE007F, 0xE0100, 0xE01EF,
+}
+
+-- These characters take two columns: East Asian wide and fullwidth
+-- characters, and the characters with emoji presentation.
+local WIDE = {
+    0x1100, 0x115F, 0x231A, 0x231B, 0x2329, 0x232A, 0x23E9, 0x23EC, 0x23F0, 0x23F0, 0x23F3, 0x23F3,
+    0x25FD, 0x25FE, 0x2614, 0x2615, 0x2648, 0x2653, 0x267F, 0x267F, 0x2693, 0x2693, 0x26A1, 0x26A1,
+    0x26AA, 0x26AB, 0x26BD, 0x26BE, 0x26C4, 0x26C5, 0x26CE, 0x26CE, 0x26D4, 0x26D4, 0x26EA, 0x26EA,
+    0x26F2, 0x26F3, 0x26F5, 0x26F5, 0x26FA, 0x26FA, 0x26FD, 0x26FD, 0x2705, 0x2705, 0x270A, 0x270B,
+    0x2728, 0x2728, 0x274C, 0x274C, 0x274E, 0x274E, 0x2753, 0x2755, 0x2757, 0x2757, 0x2795, 0x2797,
+    0x27B0, 0x27B0, 0x27BF, 0x27BF, 0x2B1B, 0x2B1C, 0x2B50, 0x2B50, 0x2B55, 0x2B55, 0x2E80, 0x2E99,
+    0x2E9B, 0x2EF3, 0x2F00, 0x2FD5, 0x2FF0, 0x303E, 0x3041, 0x3096, 0x309B, 0x30FF, 0x3105, 0x312F,
+    0x3131, 0x318E, 0x3190, 0x31E3, 0x31F0, 0x321E, 0x3220, 0x3247, 0x3250, 0x4DBF, 0x4E00, 0xA48C,
+    0xA490, 0xA4C6, 0xA960, 0xA97C, 0xAC00, 0xD7A3, 0xF900, 0xFAFF, 0xFE10, 0xFE19, 0xFE30, 0xFE52,
+    0xFE54, 0xFE66, 0xFE68, 0xFE6B, 0xFF01, 0xFF60, 0xFFE0, 0xFFE6, 0x16FE0, 0x16FE4, 0x17000, 0x187F7,
+    0x18800, 0x18CD5, 0x1B000, 0x1B2FB, 0x1F004, 0x1F004, 0x1F0CF, 0x1F0CF, 0x1F18E, 0x1F18E,
+    0x1F191, 0x1F19A, 0x1F200, 0x1F202, 0x1F210, 0x1F23B, 0x1F240, 0x1F248, 0x1F250, 0x1F251,
+    0x1F260, 0x1F265, 0x1F300, 0x1F320, 0x1F32D, 0x1F335, 0x1F337, 0x1F37C, 0x1F37E, 0x1F393,
+    0x1F3A0, 0x1F3CA, 0x1F3CF, 0x1F3D3, 0x1F3E0, 0x1F3F0, 0x1F3F4, 0x1F3F4, 0x1F3F8, 0x1F43E,
+    0x1F440, 0x1F440, 0x1F442, 0x1F4FC, 0x1F4FF, 0x1F53D, 0x1F54B, 0x1F54E, 0x1F550, 0x1F567,
+    0x1F57A, 0x1F57A, 0x1F595, 0x1F596, 0x1F5A4, 0x1F5A4, 0x1F5FB, 0x1F64F, 0x1F680, 0x1F6C5,
+    0x1F6CC, 0x1F6CC, 0x1F6D0, 0x1F6D2, 0x1F6D5, 0x1F6D7, 0x1F6DC, 0x1F6DF, 0x1F6EB, 0x1F6EC,
+    0x1F6F4, 0x1F6FC, 0x1F7E0, 0x1F7EB, 0x1F7F0, 0x1F7F0, 0x1F90C, 0x1F93A, 0x1F93C, 0x1F945,
+    0x1F947, 0x1F9FF, 0x1FA70, 0x1FA7C, 0x1FA80, 0x1FA89, 0x1FA8F, 0x1FAC6, 0x1FACE, 0x1FADC,
+    0x1FADF, 0x1FAE9, 0x1FAF0, 0x1FAF8, 0x20000, 0x2FFFD, 0x30000, 0x3FFFD,
+}
+
+local function within(ranges, cp)
+    local lo, hi = 1, #ranges // 2
+    while lo <= hi do
+        local mid = (lo + hi) // 2
+        if cp < ranges[2 * mid - 1] then
+            hi = mid - 1
+        elseif cp > ranges[2 * mid] then
+            lo = mid + 1
+        else
+            return true
+        end
+    end
+    return false
+end
+
+local function char_width(cp)
+    if cp < 0x300 then
+        if cp < 32 or (cp >= 0x7F and cp < 0xA0) then
+            return 0
+        end
+        return 1
+    end
+    if within(ZERO, cp) then
+        return 0
+    end
+    if cp >= 0x1100 and within(WIDE, cp) then
+        return 2
+    end
+    return 1
+end
+
+local function regional(cp)
+    return cp ~= nil and cp >= 0x1F1E6 and cp <= 0x1F1FF
+end
+
+-- Tokens -----------------------------------------------------------------------
+
+local CSI = "^\27%[[0-?]*[ -/]*[@-~]()"
+local OSC_BEL = "^\27%][^\7\27]*\7()"
+local OSC_ST = "^\27%][^\7\27]*\27\\()"
+local ESC_ONE = "^\27[@-Z\\^_]()"
+
+-- Splits text into tokens. `T` holds the text of each token and `W` its
+-- width. An escape sequence has the width -1. Every other token is one
+-- character with the marks, joiners, and selectors that attach to it.
+local function tokens(text)
+    local cps = {}
+    local n = 0
+    for _, cp in utf8.codes(text) do
+        n = n + 1
+        cps[n] = cp
+    end
+    local T, W = {}, {}
+    local count = 0
+    local i = 1
+    while i <= n do
+        local cp = cps[i]
+        local j
+        local w
+        if cp == 27 then
+            j = text:match(CSI, i) or text:match(OSC_BEL, i) or text:match(OSC_ST, i) or text:match(ESC_ONE, i)
+            if j == nil then
+                j = i + 1
+            end
+            w = -1
+        else
+            w = char_width(cp)
+            j = i + 1
+            if regional(cp) and regional(cps[j]) then
+                w = 2
+                j = j + 1
+            end
+            while j <= n do
+                local c = cps[j]
+                if c == 0x200D then
+                    local after = cps[j + 1]
+                    if after ~= nil and after >= 0x2190 and (w == 2 or cp >= 0x2190) then
+                        j = j + 2
+                    else
+                        j = j + 1
+                    end
+                elseif c == 0xFE0F then
+                    if w == 1 and (cp >= 0xA9 or cps[j + 1] == 0x20E3) then
+                        w = 2
+                    end
+                    j = j + 1
+                elseif c >= 0x300 and within(ZERO, c) then
+                    j = j + 1
+                else
+                    break
+                end
+            end
+        end
+        count = count + 1
+        T[count] = j == i + 1 and text:sub(i, i) or text:sub(i, j - 1)
+        W[count] = w
+        i = j
+    end
+    return T, W, count
+end
+
+--- Returns the number of terminal columns that `text` takes.
+---
+--- East Asian wide and fullwidth characters and emoji count as two
+--- columns. Combining marks, variation selectors, zero-width characters,
+--- and control characters count as none. An emoji sequence joined by
+--- U+200D, a flag, and an emoji with a skin tone each count as two. ANSI
+--- escape sequences are skipped. Every other character counts as one.
+--- @param text string The text.
+--- @return integer
+function M.width(text)
+    text = tostring(text)
+    if not text:find("[^ -~]") then
+        return #text
+    end
+    local _, W, count = tokens(text)
+    local total = 0
+    for i = 1, count do
+        local w = W[i]
+        if w > 0 then
+            total = total + w
+        end
+    end
+    return total
+end
+
+local measure = M.width
+
+--- Removes every ANSI escape sequence from `text`.
+---
+--- The sequences are the control sequences that start with `ESC [`, such
+--- as colors and cursor moves, the operating system commands that start
+--- with `ESC ]`, such as hyperlinks, and the two-character escapes.
+--- @param text string The text.
+--- @return string
+function M.strip_ansi(text)
+    text = tostring(text)
+    if not text:find("\27", 1, true) then
+        return text
+    end
+    text = text:gsub("\27%[[0-?]*[ -/]*[@-~]", "")
+    text = text:gsub("\27%][^\7\27]*\7", "")
+    text = text:gsub("\27%][^\7\27]*\27\\", "")
+    text = text:gsub("\27[@-Z\\^_]", "")
+    return text
+end
+
+-- Style state ------------------------------------------------------------------
+
+local RESET = "\27[0m"
+local SLOTS = { "bold", "dim", "italic", "underline", "inverse", "hidden", "strike", "fg", "bg" }
+local ON = { [1] = "bold", [2] = "dim", [3] = "italic", [4] = "underline", [7] = "inverse", [8] = "hidden", [9] = "strike" }
+local OFF = {
+    [22] = { "bold", "dim" }, [23] = { "italic" }, [24] = { "underline" }, [27] = { "inverse" },
+    [28] = { "hidden" }, [29] = { "strike" }, [39] = { "fg" }, [49] = { "bg" },
+}
+
+-- Records the effect of one escape sequence on the active styles. Only
+-- the sequences that end in `m` change them.
+local function track(state, sequence)
+    local params = sequence:match("^\27%[([%d;:]*)m$")
+    if params == nil then
+        return
+    end
+    if params == "" then
+        params = "0"
+    end
+    local codes = {}
+    for code in params:gmatch("[^;]+") do
+        codes[#codes + 1] = code
+    end
+    local i = 1
+    while i <= #codes do
+        local code = tonumber(codes[i])
+        if code == nil then
+            -- A color with colon separators is one parameter.
+            local head = tonumber(codes[i]:match("^%d+"))
+            if head == 38 then
+                state.fg = codes[i]
+            elseif head == 48 then
+                state.bg = codes[i]
+            end
+        elseif code == 0 then
+            for _, slot in ipairs(SLOTS) do
+                state[slot] = nil
+            end
+        elseif ON[code] then
+            state[ON[code]] = codes[i]
+        elseif OFF[code] then
+            for _, slot in ipairs(OFF[code]) do
+                state[slot] = nil
+            end
+        elseif code == 38 or code == 48 then
+            local length = codes[i + 1] == "2" and 4 or 2
+            local color = table.concat(codes, ";", i, math.min(#codes, i + length))
+            state[code == 38 and "fg" or "bg"] = color
+            i = i + length
+        elseif (code >= 30 and code <= 37) or (code >= 90 and code <= 97) then
+            state.fg = codes[i]
+        elseif (code >= 40 and code <= 47) or (code >= 100 and code <= 107) then
+            state.bg = codes[i]
+        end
+        i = i + 1
+    end
+end
+
+-- Returns the sequence that turns the active styles back on, or nil.
+local function reopen(state)
+    local codes = nil
+    for _, slot in ipairs(SLOTS) do
+        if code = state[slot] then
+            codes = codes and (codes .. ";" .. code) or code
+        end
+    end
+    return codes and ("\27[" .. codes .. "m")
+end
+
+-- Wrapping ---------------------------------------------------------------------
+
+-- Wraps one paragraph and appends its lines to `out`.
+local function wrap_paragraph(text, limit, state, out)
+    local T, W, count = tokens(text)
+    local line = {}
+    local used = 0
+    if start = reopen(state) then
+        line[1] = start
+    end
+
+    local function flush(last)
+        if not last and reopen(state) then
+            line[#line + 1] = RESET
+        end
+        out[#out + 1] = table.concat(line)
+        line = {}
+        used = 0
+        local open = reopen(state)
+        if open and not last then
+            line[1] = open
+        end
+    end
+
+    local function put(i)
+        local w = W[i]
+        if w < 0 then
+            track(state, T[i])
+        else
+            used = used + w
+        end
+        line[#line + 1] = T[i]
+    end
+
+    local first = true
+    local i = 1
+    while i <= count do
+        -- The spaces before a word.
+        local gap = i
+        while i <= count and (T[i] == " " or T[i] == "\t") do
+            i = i + 1
+        end
+        local spaces = i - gap
+        -- The word, with the escape sequences next to it.
+        local head = i
+        local size = 0
+        while i <= count and T[i] ~= " " and T[i] ~= "\t" do
+            if W[i] > 0 then
+                size = size + W[i]
+            end
+            i = i + 1
+        end
+        if head == i then
+            break
+        end
+        if used == 0 and first then
+            -- The indentation of a paragraph stays when the word fits after it.
+            if spaces + size <= limit then
+                line[#line + 1] = string.rep(" ", spaces)
+                used = spaces
+            end
+        elseif used > 0 and used + spaces + size <= limit then
+            line[#line + 1] = string.rep(" ", spaces)
+            used = used + spaces
+        elseif used > 0 then
+            flush(false)
+        end
+        first = false
+        if used + size <= limit then
+            for k = head, i - 1 do
+                put(k)
+            end
+        else
+            -- A word wider than the line breaks between characters.
+            for k = head, i - 1 do
+                if W[k] > 0 and used > 0 and used + W[k] > limit then
+                    flush(false)
+                end
+                put(k)
+            end
+        end
+    end
+    return flush
+end
+
+local function wrap_lines(text, limit)
+    local out = {}
+    local state = {}
+    local previous = nil
+    for paragraph in (text .. "\n"):gmatch("([^\n]*)\n") do
+        if previous then
+            previous(false)
+        end
+        previous = wrap_paragraph(paragraph, limit, state, out)
+    end
+    previous(true)
+    return out
+end
+
+local function check_width(value, name)
+    if math.type(value) ~= "integer" or value < 1 then
+        error("bad argument #2 to '" .. name .. "' (positive integer expected)", 3)
+    end
+end
+
+--- Wraps text so that every line takes at most `width` columns.
+---
+--- Lines break at spaces, and the spaces at a break are dropped. A word
+--- wider than the line breaks between characters. The line breaks and the
+--- indentation of the text stay. A style that is active at a break is reset
+--- at the end of the line and turned back on at the start of the next one,
+--- so a border or a prompt beside the text keeps its own colors.
+--- @param text string The text.
+--- @param width integer The largest width of a line, in columns.
+--- @return string The lines, joined with newlines.
+function M.wrap(text, width)
+    check_width(width, "wrap")
+    return table.concat(wrap_lines(tostring(text), width), "\n")
+end
+
+--- Shortens text to at most `width` columns.
+---
+--- Text that fits is returned as is. Longer text is cut between characters
+--- and ends with the ellipsis, which counts toward the width. The escape
+--- sequences before the cut stay, and a style that is active at the cut is
+--- reset after the ellipsis.
+--- @param text string The text.
+--- @param width integer The largest width of the result, in columns.
+--- @param ellipsis string? The mark of the cut. The default is the character U+2026.
+--- @return string
+function M.truncate(text, width, ellipsis)
+    check_width(width, "truncate")
+    text = tostring(text)
+    if M.width(text) <= width then
+        return text
+    end
+    ellipsis = ellipsis or "\u{2026}"
+    local budget = width - M.width(ellipsis)
+    if budget < 0 then
+        ellipsis = ""
+        budget = width
+    end
+    local T, W, count = tokens(text)
+    local out = {}
+    local state = {}
+    local used = 0
+    for i = 1, count do
+        local w = W[i]
+        if w < 0 then
+            track(state, T[i])
+        elseif used + w > budget then
+            break
+        else
+            used = used + w
+        end
+        out[#out + 1] = T[i]
+    end
+    out[#out + 1] = ellipsis
+    if reopen(state) then
+        out[#out + 1] = RESET
+    end
+    return table.concat(out)
+end
+
+local function pad(text, size, align)
+    local missing = size - measure(text)
+    if missing <= 0 then
+        return text
+    end
+    if align == "right" then
+        return string.rep(" ", missing) .. text
+    elseif align == "center" then
+        local left = missing // 2
+        return string.rep(" ", left) .. text .. string.rep(" ", missing - left)
+    end
+    return text .. string.rep(" ", missing)
+end
+
+--- Pads text with spaces to a width in columns.
+---
+--- Text that is already as wide or wider is returned as is.
+--- @param text string The text.
+--- @param width integer The width to reach, in columns.
+--- @param align string? `"left"` by default, which pads on the right. `"right"` pads on the left and `"center"` on both sides.
+--- @return string
+function M.pad(text, width, align)
+    return pad(tostring(text), width, align)
+end
+
+-- Tables and boxes -------------------------------------------------------------
+
+-- Each style lists the corners and joints row by row, then the horizontal
+-- and the vertical line.
+local BORDERS = {
+    single = { "\u{250c}", "\u{252c}", "\u{2510}", "\u{251c}", "\u{253c}", "\u{2524}", "\u{2514}", "\u{2534}", "\u{2518}", "\u{2500}", "\u{2502}" },
+    rounded = { "\u{256d}", "\u{252c}", "\u{256e}", "\u{251c}", "\u{253c}", "\u{2524}", "\u{2570}", "\u{2534}", "\u{256f}", "\u{2500}", "\u{2502}" },
+    double = { "\u{2554}", "\u{2566}", "\u{2557}", "\u{2560}", "\u{256c}", "\u{2563}", "\u{255a}", "\u{2569}", "\u{255d}", "\u{2550}", "\u{2551}" },
+    heavy = { "\u{250f}", "\u{2533}", "\u{2513}", "\u{2523}", "\u{254b}", "\u{252b}", "\u{2517}", "\u{253b}", "\u{251b}", "\u{2501}", "\u{2503}" },
+    ascii = { "+", "+", "+", "+", "+", "+", "+", "+", "+", "-", "|" },
+}
+
+local function border_of(options, level)
+    local name = options and options.border
+    if name == nil then
+        name = "single"
+    end
+    if name == "none" or name == false then
+        return nil
+    end
+    local border = BORDERS[name]
+    if border == nil then
+        error(`unknown border '$(tostring(name))'`, level)
+    end
+    return border
+end
+
+local function per_column(value, column)
+    if type(value) == "table" then
+        return value[column]
+    end
+    return value
+end
+
+--- Draws rows of cells as a table and returns it as text.
+---
+--- Each row is a list of cells, and each cell is converted with `tostring`.
+--- A column is as wide as its widest cell. A cell with line breaks, or one
+--- wrapped by `max_width`, takes several lines. Widths are measured in
+--- columns, so wide characters and colored text line up.
+--- @param rows table The rows, each a list of cells.
+--- @param options table? `header` set to `true` draws a rule under the first row. `border` is `"single"` by default, or `"rounded"`, `"double"`, `"heavy"`, `"ascii"`, or `"none"`, which separates the columns with spaces. `align` is `"left"`, `"right"`, or `"center"` for every column, or a list with one value per column. `max_width` is the largest width of the text of a column, for every column or as a list per column. Longer cells wrap. `padding` is the number of spaces on each side of a cell, 1 by default.
+--- @return string The table, without a final newline.
+function M.table(rows, options)
+    if type(rows) ~= "table" then
+        error("bad argument #1 to 'table' (table expected, got " .. type(rows) .. ")", 2)
+    end
+    local border = border_of(options, 3)
+    local padding = options and options.padding or 1
+    local align = options and options.align
+    local max_width = options and options.max_width
+    local columns = 0
+    for _, row in ipairs(rows) do
+        columns = math.max(columns, #row)
+    end
+    -- Every cell becomes a list of lines.
+    local cells = {}
+    local widths = {}
+    for c = 1, columns do
+        widths[c] = 0
+    end
+    for r, row in ipairs(rows) do
+        local line_cells = {}
+        for c = 1, columns do
+            local value = row[c]
+            local lines = wrap_lines(value == nil and "" or tostring(value), per_column(max_width, c) or math.maxinteger)
+            for _, line in ipairs(lines) do
+                widths[c] = math.max(widths[c], measure(line))
+            end
+            line_cells[c] = lines
+        end
+        cells[r] = line_cells
+    end
+
+    local out = {}
+    local space = string.rep(" ", padding)
+
+    local function rule(left, middle, right)
+        local parts = {}
+        for c = 1, columns do
+            parts[c] = string.rep(border[10], widths[c] + 2 * padding)
+        end
+        out[#out + 1] = left .. table.concat(parts, middle) .. right
+    end
+
+    if border then
+        rule(border[1], border[2], border[3])
+    end
+    for r, row in ipairs(cells) do
+        local height = 1
+        for c = 1, columns do
+            height = math.max(height, #row[c])
+        end
+        for l = 1, height do
+            local parts = {}
+            for c = 1, columns do
+                parts[c] = pad(row[c][l] or "", widths[c], per_column(align, c))
+            end
+            if border then
+                local bar = border[11]
+                out[#out + 1] = bar .. space .. table.concat(parts, space .. bar .. space) .. space .. bar
+            else
+                out[#out + 1] = (table.concat(parts, space .. space):gsub(" +$", ""))
+            end
+        end
+        if r == 1 and options and options.header and #cells > 1 then
+            if border then
+                rule(border[4], border[5], border[6])
+            else
+                local parts = {}
+                for c = 1, columns do
+                    parts[c] = string.rep("-", widths[c])
+                end
+                out[#out + 1] = table.concat(parts, space .. space)
+            end
+        end
+    end
+    if border then
+        rule(border[7], border[8], border[9])
+    end
+    return table.concat(out, "\n")
+end
+
+--- Draws a box around text and returns it as text.
+--- @param text string The content. It may hold several lines.
+--- @param options table? `border` is a border style of `term.table`, `"single"` by default. `title` is written in the top edge. `width` is the largest width of the content, and longer lines wrap. `padding` is the number of spaces between the sides and the content, 1 by default. `align` is `"left"`, `"right"`, or `"center"`.
+--- @return string The box, without a final newline.
+function M.box(text, options)
+    local border = border_of(options, 3) or BORDERS.single
+    local padding = options and options.padding or 1
+    local limit = options and options.width or math.maxinteger
+    local title = options and options.title
+    local lines = wrap_lines(tostring(text), limit)
+    local inner = 0
+    for _, line in ipairs(lines) do
+        inner = math.max(inner, measure(line))
+    end
+    local top
+    local span = inner + 2 * padding
+    if title then
+        title = " " .. tostring(title) .. " "
+        local needed = measure(title) + 2
+        if needed > span then
+            inner = inner + needed - span
+            span = needed
+        end
+        top = border[10] .. title .. string.rep(border[10], span - measure(title) - 1)
+    else
+        top = string.rep(border[10], span)
+    end
+    local out = { border[1] .. top .. border[3] }
+    local space = string.rep(" ", padding)
+    for _, line in ipairs(lines) do
+        out[#out + 1] = border[11] .. space .. pad(line, inner, options and options.align) .. space .. border[11]
+    end
+    out[#out + 1] = border[7] .. string.rep(border[10], span) .. border[9]
+    return table.concat(out, "\n")
+end
+
+-- Spinners and progress bars ---------------------------------------------------
+
+local function stream_of(options)
+    local stream = options and options.stream or io.stderr
+    local tty = options and options.tty
+    if tty == nil then
+        tty = false
+        if probe = stream.isatty then
+            tty = probe(stream) and true or false
+        end
+    end
+    return stream, tty
+end
+
+local CLEAR = "\r\27[K"
+
+local Spinner = {}
+Spinner.__index = Spinner
+
+local FRAMES = {
+    "\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}",
+}
+
+--- Returns a spinner, a one-line indicator of work in progress.
+---
+--- On a terminal each `tick` redraws the line in place with the next frame.
+--- On a file or a pipe the spinner writes its text as a plain line once,
+--- and again whenever the text changes. The spinner has these methods.
+---
+--- - `spinner:tick(text)` shows the next frame. `text` replaces the text when given.
+--- - `spinner:stop(text)` clears the line, then writes `text` as a line when given.
+--- - `spinner:succeed(text)` stops with a check mark before the text, which defaults to the current text.
+--- - `spinner:fail(text)` stops with a cross before the text.
+--- @param options table? `text` is the text beside the spinner. `frames` is the list of frames. `stream` is the file to write to, standard error by default, or any value with a `write` method. `tty` forces the terminal behavior on or off. The default asks the stream through `isatty`.
+--- @return table
+function M.spinner(options)
+    local stream, tty = stream_of(options)
+    return setmetatable({
+        text = options and options.text or "",
+        frames = options and options.frames or FRAMES,
+        stream = stream,
+        tty = tty,
+        frame = 0,
+        printed = nil,
+        active = true,
+    }, Spinner)
+end
+
+-- The caller drives the animation, one frame per `tick`. An animated
+-- spinner is a detached coroutine that calls `tick` and then resumes
+-- `coroutine.sleep` in a loop until `active` is false. This is the place
+-- for it once the runtime has that function.
+function Spinner:tick(text)
+    if text ~= nil then
+        self.text = tostring(text)
+    end
+    if not self.active then
+        return self
+    end
+    if self.tty then
+        self.frame = self.frame % #self.frames + 1
+        self.stream:write("\r" .. self.frames[self.frame] .. " " .. self.text .. "\27[K")
+    elseif self.printed ~= self.text then
+        self.printed = self.text
+        self.stream:write(self.text .. "\n")
+    end
+    return self
+end
+
+function Spinner:stop(text)
+    if not self.active then
+        return self
+    end
+    self.active = false
+    if self.tty and self.frame > 0 then
+        self.stream:write(CLEAR)
+    end
+    if text ~= nil then
+        self.stream:write(tostring(text) .. "\n")
+    end
+    return self
+end
+
+function Spinner:succeed(text)
+    return self:stop("\u{2714} " .. tostring(text or self.text))
+end
+
+function Spinner:fail(text)
+    return self:stop("\u{2716} " .. tostring(text or self.text))
+end
+
+local Progress = {}
+Progress.__index = Progress
+
+--- Returns a progress bar for a known amount of work.
+---
+--- On a terminal the bar redraws in place whenever its line changes, as in
+--- `Copying [#####     ] 50% 5/10` with block characters, and ends with a
+--- newline when the value reaches the total. On a file or a pipe it writes
+--- a plain line such as `Copying 50% (5/10)` each time the percentage
+--- passes another `step`. The bar has these methods.
+---
+--- - `bar:tick(amount)` adds `amount` to the value, 1 by default.
+--- - `bar:update(value)` sets the value.
+--- - `bar:finish()` sets the value to the total and ends the line.
+--- - `bar:render()` returns the line of the bar as text.
+--- @param options table `total` is the amount of work and is required. `label` is the text before the bar. `width` is the width of the bar in columns, 30 by default. `complete` and `incomplete` are the characters of the two parts. `step` is the distance in percent between two plain lines, 10 by default. `stream` and `tty` are those of `term.spinner`.
+--- @return table
+function M.progress(options)
+    if type(options) ~= "table" or type(options.total) ~= "number" or options.total <= 0 then
+        error("term.progress needs a positive total", 2)
+    end
+    local stream, tty = stream_of(options)
+    return setmetatable({
+        total = options.total,
+        value = 0,
+        label = options.label,
+        width = options.width or 30,
+        complete = options.complete or "\u{2588}",
+        incomplete = options.incomplete or "\u{2591}",
+        step = options.step or 10,
+        stream = stream,
+        tty = tty,
+        drawn = nil,
+        reported = -1,
+        done = false,
+    }, Progress)
+end
+
+local function count_text(n)
+    if math.type(n) == "float" and n == math.floor(n) then
+        return string.format("%d", n)
+    end
+    return tostring(n)
+end
+
+function Progress:render()
+    local ratio = self.value / self.total
+    local percent = math.floor(ratio * 100)
+    local filled = math.floor(ratio * self.width)
+    local prefix = self.label and (self.label .. " ") or ""
+    return prefix .. "[" .. string.rep(self.complete, filled) .. string.rep(self.incomplete, self.width - filled)
+        .. "] " .. percent .. "% " .. count_text(self.value) .. "/" .. count_text(self.total)
+end
+
+function Progress:update(value)
+    if self.done then
+        return self
+    end
+    self.value = math.max(0, math.min(self.total, value))
+    local finished = self.value >= self.total
+    if self.tty then
+        local line = self:render()
+        if line ~= self.drawn then
+            self.drawn = line
+            self.stream:write("\r" .. line .. "\27[K")
+        end
+        if finished then
+            self.stream:write("\n")
+        end
+    else
+        local percent = math.floor(self.value / self.total * 100)
+        local mark = percent // self.step
+        if mark > self.reported or finished then
+            self.reported = mark
+            local prefix = self.label and (self.label .. " ") or ""
+            self.stream:write(prefix .. percent .. "% (" .. count_text(self.value) .. "/" .. count_text(self.total) .. ")\n")
+        end
+    end
+    self.done = finished
+    return self
+end
+
+function Progress:tick(amount)
+    return self:update(self.value + (amount or 1))
+end
+
+function Progress:finish()
+    return self:update(self.total)
+end
+
+return M

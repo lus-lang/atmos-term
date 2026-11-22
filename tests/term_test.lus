@@ -1,0 +1,347 @@
+local ROOT = string.match(TEST_DIR, "^(.*)[/\\][^/\\]*$")
+pledge("load", "fs:read=" .. ROOT .. "/*")
+package.path = ROOT .. "/?.lus;" .. package.path
+
+local term = require("term")
+
+local RED, BOLD, RESET = "\27[31m", "\27[1m", "\27[0m"
+
+-- A stream that records what it receives.
+local function recorder(tty)
+    local stream = { chunks = {} }
+    function stream:write(text)
+        self.chunks[#self.chunks + 1] = text
+        return self
+    end
+    function stream:isatty()
+        return tty
+    end
+    function stream:text()
+        return table.concat(self.chunks)
+    end
+    return stream
+end
+
+-- Width ------------------------------------------------------------------------
+
+local function width_ascii_test()
+    assert(term.width("") == 0)
+    assert(term.width("hello") == 5)
+    assert(term.width("a b") == 3)
+    assert(term.width(12345) == 5)
+    assert(term.width("tab\there\n") == 7)
+end
+
+local function width_wide_test()
+    assert(term.width("\u{65e5}\u{672c}\u{8a9e}") == 6)
+    assert(term.width("\u{d55c}\u{ae00}") == 4)
+    assert(term.width("\u{30ab}\u{30bf}\u{30ab}\u{30ca}") == 8)
+    assert(term.width("\u{ff21}\u{ff22}") == 4)
+    assert(term.width("\u{3000}") == 2)
+    assert(term.width("a\u{4e2d}b") == 4)
+    -- Halfwidth katakana takes one column.
+    assert(term.width("\u{ff76}") == 1)
+end
+
+local function width_combining_test()
+    assert(term.width("e\u{301}") == 1)
+    assert(term.width("caf\u{e9}") == 4)
+    assert(term.width("a\u{200b}b") == 2)
+    assert(term.width("\u{939}\u{93f}\u{928}\u{94d}\u{926}\u{940}") == 5)
+    assert(term.width("\u{e01}\u{e49}") == 1)
+    assert(term.width("\u{feff}x") == 1)
+end
+
+local function width_emoji_test()
+    assert(term.width("\u{1f600}") == 2)
+    assert(term.width("\u{1f44d}\u{1f3fd}") == 2)
+    assert(term.width("\u{1f469}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466}") == 2)
+    assert(term.width("\u{1f469}\u{200d}\u{2764}\u{fe0f}\u{200d}\u{1f468}") == 2)
+    assert(term.width("\u{1f1eb}\u{1f1f7}") == 2)
+    assert(term.width("\u{1f1eb}\u{1f1f7}\u{1f1ef}\u{1f1f5}") == 4)
+    assert(term.width("\u{2764}") == 1)
+    assert(term.width("\u{2764}\u{fe0f}") == 2)
+    assert(term.width("1\u{fe0f}\u{20e3}") == 2)
+    assert(term.width("ok \u{2705}") == 5)
+end
+
+local function width_ansi_test()
+    assert(term.width(RED .. "red" .. RESET) == 3)
+    assert(term.width("\27[38;2;255;136;0morange\27[39m") == 6)
+    assert(term.width("\27[2K\27[1Gline") == 4)
+    assert(term.width("\27]8;;https://lus.dev\27\\link\27]8;;\27\\") == 4)
+    assert(term.width("\27]0;title\7text") == 4)
+    assert(term.width(RED .. "\u{65e5}\u{672c}" .. RESET) == 4)
+end
+
+local function strip_ansi_test()
+    assert(term.strip_ansi("plain") == "plain")
+    assert(term.strip_ansi(RED .. "red" .. RESET) == "red")
+    assert(term.strip_ansi(BOLD .. RED .. "a" .. RESET .. "b") == "ab")
+    assert(term.strip_ansi("\27[38;5;208mx\27[39m") == "x")
+    assert(term.strip_ansi("\27]8;;https://lus.dev\27\\link\27]8;;\27\\") == "link")
+    assert(term.strip_ansi("\27[2J\27[Hhome\27M") == "home")
+end
+
+-- Wrapping ---------------------------------------------------------------------
+
+local function wrap_words_test()
+    assert(term.wrap("the quick brown fox", 10) == "the quick\nbrown fox")
+    assert(term.wrap("the quick brown fox", 100) == "the quick brown fox")
+    assert(term.wrap("a b c", 1) == "a\nb\nc")
+    assert(term.wrap("", 10) == "")
+    assert(term.wrap("one  two", 20) == "one  two")
+    assert(term.wrap("trailing   ", 20) == "trailing")
+end
+
+local function wrap_paragraphs_test()
+    assert(term.wrap("first line\n\nsecond line here", 11) == "first line\n\nsecond line\nhere")
+    assert(term.wrap("  indented text stays", 12) == "  indented\ntext stays")
+end
+
+local function wrap_long_word_test()
+    assert(term.wrap("abcdefghij", 4) == "abcd\nefgh\nij")
+    assert(term.wrap("see https://example.com/path now", 8) == "see\nhttps://\nexample.\ncom/path\nnow")
+end
+
+local function wrap_wide_test()
+    assert(term.wrap("\u{65e5}\u{672c}\u{8a9e}\u{65e5}\u{672c}", 5) == "\u{65e5}\u{672c}\n\u{8a9e}\u{65e5}\n\u{672c}")
+    -- A character wider than the line still takes a line of its own.
+    assert(term.wrap("\u{65e5}\u{672c}", 1) == "\u{65e5}\n\u{672c}")
+    -- An emoji sequence never splits.
+    local family = "\u{1f469}\u{200d}\u{1f467}"
+    assert(term.wrap(family .. family .. family, 4) == family .. family .. "\n" .. family)
+end
+
+local function wrap_ansi_test()
+    local text = RED .. "hello world" .. "\27[39m"
+    assert(term.wrap(text, 5) == RED .. "hello" .. RESET .. "\n" .. RED .. "world\27[39m")
+    -- A style that ended before the break is left alone.
+    assert(term.wrap(RED .. "hello\27[39m world", 5) == RED .. "hello\27[39m\nworld")
+    for _, line in ipairs({ "\27[1;31mhello" .. RESET, "\27[1;31mworld" .. RESET }) do
+        assert(term.width(line) == 5)
+    end
+end
+
+local function wrap_ansi_state_test()
+    local text = BOLD .. "\27[38;5;208m" .. "aa bb" .. "\27[22m" .. " cc dd" .. RESET
+    local lines = term.wrap(text, 2):split("\n")
+    assert(#lines == 4)
+    assert(lines[1] == BOLD .. "\27[38;5;208maa" .. RESET)
+    assert(lines[2] == "\27[1;38;5;208mbb\27[22m" .. RESET)
+    assert(lines[3] == "\27[38;5;208mcc" .. RESET)
+    assert(lines[4] == "\27[38;5;208mdd" .. RESET)
+    -- The style also carries across the line breaks of the text.
+    assert(term.wrap(RED .. "a\nb" .. RESET, 10) == RED .. "a" .. RESET .. "\n" .. RED .. "b" .. RESET)
+end
+
+local function wrap_arguments_test()
+    raises(function() term.wrap("x", 0) end, "positive integer expected")
+    raises(function() term.wrap("x", 2.5) end, "positive integer expected")
+    raises(function() term.truncate("x") end, "positive integer expected")
+end
+
+-- Truncating and padding -------------------------------------------------------
+
+local function truncate_test()
+    assert(term.truncate("hello", 10) == "hello")
+    assert(term.truncate("hello", 5) == "hello")
+    assert(term.truncate("hello world", 8) == "hello w\u{2026}")
+    assert(term.truncate("hello world", 8, "...") == "hello...")
+    assert(term.truncate("hello world", 8, "") == "hello wo")
+    assert(term.truncate("hello", 1) == "\u{2026}")
+    assert(term.truncate("hello", 2, "...") == "he")
+end
+
+local function truncate_wide_test()
+    -- The cut falls before a wide character that does not fit.
+    assert(term.truncate("\u{65e5}\u{672c}\u{8a9e}\u{65e5}\u{672c}", 6) == "\u{65e5}\u{672c}\u{2026}")
+    assert(term.width(term.truncate("\u{65e5}\u{672c}\u{8a9e}\u{65e5}\u{672c}", 6)) == 5)
+    assert(term.truncate("e\u{301}e\u{301}e\u{301}e\u{301}", 3) == "e\u{301}e\u{301}\u{2026}")
+end
+
+local function truncate_ansi_test()
+    assert(term.truncate(RED .. "hello world" .. RESET, 8) == RED .. "hello w\u{2026}" .. RESET)
+    assert(term.truncate(RED .. "hi" .. RESET .. " there friend", 8) == RED .. "hi" .. RESET .. " ther\u{2026}")
+    assert(term.truncate(RED .. "hello" .. RESET, 5) == RED .. "hello" .. RESET)
+end
+
+local function pad_test()
+    assert(term.pad("ab", 5) == "ab   ")
+    assert(term.pad("ab", 5, "right") == "   ab")
+    assert(term.pad("ab", 5, "center") == " ab  ")
+    assert(term.pad("abcdef", 3) == "abcdef")
+    assert(term.pad("\u{65e5}", 4) == "\u{65e5}  ")
+    assert(term.pad(RED .. "ab" .. RESET, 4) == RED .. "ab" .. RESET .. "  ")
+end
+
+-- Tables and boxes -------------------------------------------------------------
+
+local function table_test()
+    local text = term.table({ { "name", "size" }, { "lus", "2.1 MB" } }, { header = true })
+    assert(text == table.concat({
+        "\u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{252c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}",
+        "\u{2502} name \u{2502} size   \u{2502}",
+        "\u{251c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{253c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2524}",
+        "\u{2502} lus  \u{2502} 2.1 MB \u{2502}",
+        "\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2534}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}",
+    }, "\n"))
+end
+
+local function table_ascii_test()
+    local text = term.table({ { "a", "b" }, { 1, 22 }, { 333 } }, { border = "ascii", header = true, align = { "right", "center" } })
+    assert(text == table.concat({
+        "+-----+----+",
+        "|   a | b  |",
+        "+-----+----+",
+        "|   1 | 22 |",
+        "| 333 |    |",
+        "+-----+----+",
+    }, "\n"))
+end
+
+local function table_none_test()
+    local rows = { { "name", "size" }, { "lus", "2.1 MB" }, { "readme", "4 kB" } }
+    assert(term.table(rows, { border = "none" }) == "name    size\nlus     2.1 MB\nreadme  4 kB")
+    assert(term.table(rows, { border = "none", header = true, align = "right" })
+        == "  name    size\n------  ------\n   lus  2.1 MB\nreadme    4 kB")
+    assert(term.table({}, { border = "none" }) == "")
+end
+
+local function table_styles_test()
+    local rows = { { "x" } }
+    assert(term.table(rows, { border = "rounded" }) == "\u{256d}\u{2500}\u{2500}\u{2500}\u{256e}\n\u{2502} x \u{2502}\n\u{2570}\u{2500}\u{2500}\u{2500}\u{256f}")
+    assert(term.table(rows, { border = "double" }) == "\u{2554}\u{2550}\u{2550}\u{2550}\u{2557}\n\u{2551} x \u{2551}\n\u{255a}\u{2550}\u{2550}\u{2550}\u{255d}")
+    assert(term.table(rows, { border = "heavy" }) == "\u{250f}\u{2501}\u{2501}\u{2501}\u{2513}\n\u{2503} x \u{2503}\n\u{2517}\u{2501}\u{2501}\u{2501}\u{251b}")
+    assert(term.table(rows, { border = "ascii", padding = 0 }) == "+-+\n|x|\n+-+")
+    raises(function() term.table(rows, { border = "wavy" }) end, "unknown border 'wavy'")
+    raises(function() term.table("x") end, "table expected")
+end
+
+local function table_wrap_test()
+    local text = term.table({ { "id", "note" }, { 1, "a long note that wraps" } }, { border = "ascii", max_width = { nil, 9 } })
+    assert(text == table.concat({
+        "+----+-----------+",
+        "| id | note      |",
+        "| 1  | a long    |",
+        "|    | note that |",
+        "|    | wraps     |",
+        "+----+-----------+",
+    }, "\n"))
+    local all = term.table({ { "abcdef", "ghijkl" } }, { border = "ascii", max_width = 3 })
+    assert(all == "+-----+-----+\n| abc | ghi |\n| def | jkl |\n+-----+-----+")
+end
+
+local function table_width_test()
+    -- Wide characters, colors, and line breaks keep the columns in line.
+    local text = term.table({
+        { "\u{65e5}\u{672c}", RED .. "red" .. RESET },
+        { "a\nb", "\u{1f600}" },
+    }, { border = "ascii" })
+    local lines = text:split("\n")
+    assert(#lines == 5)
+    for _, line in ipairs(lines) do
+        assert(term.width(line) == 14)
+    end
+    assert(lines[2] == "| \u{65e5}\u{672c} | " .. RED .. "red" .. RESET .. " |")
+    assert(lines[4] == "| b    |     |")
+end
+
+local function box_test()
+    assert(term.box("hi") == "\u{250c}\u{2500}\u{2500}\u{2500}\u{2500}\u{2510}\n\u{2502} hi \u{2502}\n\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}")
+    assert(term.box("hello\nhi", { border = "ascii" }) == "+-------+\n| hello |\n| hi    |\n+-------+")
+    assert(term.box("hi", { border = "ascii", padding = 0, align = "right" }) == "+--+\n|hi|\n+--+")
+    assert(term.box("a\nbcd", { border = "ascii", align = "center" }) == "+-----+\n|  a  |\n| bcd |\n+-----+")
+end
+
+local function box_options_test()
+    assert(term.box("hello world", { border = "ascii", title = "Hi" }) == "+- Hi --------+\n| hello world |\n+-------------+")
+    -- A title wider than the content widens the box.
+    assert(term.box("x", { border = "ascii", title = "Title" }) == "+- Title -+\n| x       |\n+---------+")
+    assert(term.box("one two three", { border = "ascii", width = 5 }) == "+-------+\n| one   |\n| two   |\n| three |\n+-------+")
+end
+
+-- Spinners and progress bars ---------------------------------------------------
+
+local function spinner_tty_test()
+    local stream = recorder(true)
+    local spinner = term.spinner({ text = "Loading", stream = stream, frames = { "-", "+" } })
+    spinner:tick()
+    spinner:tick()
+    spinner:tick("Almost")
+    spinner:succeed("Done")
+    assert(stream:text() == "\r- Loading\27[K\r+ Loading\27[K\r- Almost\27[K\r\27[K\u{2714} Done\n")
+    -- A stopped spinner stays quiet.
+    spinner:tick()
+    spinner:stop("again")
+    assert(#stream.chunks == 5)
+end
+
+local function spinner_plain_test()
+    local stream = recorder(false)
+    local spinner = term.spinner({ text = "Loading", stream = stream })
+    spinner:tick()
+    spinner:tick()
+    spinner:tick("Almost")
+    spinner:tick()
+    spinner:fail()
+    assert(stream:text() == "Loading\nAlmost\n\u{2716} Almost\n")
+    assert(not stream:text():find("\27", 1, true))
+end
+
+local function spinner_options_test()
+    -- The tty option wins over the stream.
+    local stream = recorder(true)
+    term.spinner({ text = "x", stream = stream, tty = false }):tick():stop()
+    assert(stream:text() == "x\n")
+    -- A stream without isatty is treated as a file.
+    local chunks = {}
+    local bare = { write = function(_, text) chunks[#chunks + 1] = text end }
+    term.spinner({ text = "y", stream = bare }):tick():succeed()
+    assert(table.concat(chunks) == "y\n\u{2714} y\n")
+    -- The default frames are single characters.
+    local tty = recorder(true)
+    term.spinner({ stream = tty }):tick("z")
+    assert(term.width(tty:text()) == 3)
+end
+
+local function progress_tty_test()
+    local stream = recorder(true)
+    local bar = term.progress({ total = 4, width = 8, label = "Copy", stream = stream, complete = "#", incomplete = "." })
+    bar:tick()
+    assert(stream:text() == "\rCopy [##......] 25% 1/4\27[K")
+    -- An update that leaves the line as it is writes nothing.
+    bar:update(1)
+    assert(#stream.chunks == 1)
+    bar:tick(2)
+    bar:tick()
+    assert(stream.chunks[#stream.chunks - 1] == "\rCopy [########] 100% 4/4\27[K")
+    assert(stream.chunks[#stream.chunks] == "\n")
+    local count = #stream.chunks
+    bar:tick()
+    bar:finish()
+    assert(#stream.chunks == count)
+end
+
+local function progress_plain_test()
+    local stream = recorder(false)
+    local bar = term.progress({ total = 200, label = "Copy", stream = stream, step = 25 })
+    for _ = 1, 200 do
+        bar:tick()
+    end
+    assert(stream:text() == "Copy 0% (1/200)\nCopy 25% (50/200)\nCopy 50% (100/200)\nCopy 75% (150/200)\nCopy 100% (200/200)\n")
+end
+
+local function progress_render_test()
+    local bar = term.progress({ total = 10, width = 10, stream = recorder(false) })
+    assert(bar:render() == "[" .. string.rep("\u{2591}", 10) .. "] 0% 0/10")
+    bar:update(5)
+    assert(bar:render() == "[" .. string.rep("\u{2588}", 5) .. string.rep("\u{2591}", 5) .. "] 50% 5/10")
+    bar:update(99)
+    assert(bar.value == 10)
+    local early = term.progress({ total = 3, stream = recorder(false) })
+    early:finish()
+    assert(early:render():find("100%% 3/3"))
+    raises(function() term.progress({}) end, "positive total")
+    raises(function() term.progress() end, "positive total")
+end

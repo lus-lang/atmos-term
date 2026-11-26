@@ -8,7 +8,8 @@
 
 ## Layout
 
-- `term.lus` is the whole package. Its header doc comment contains the package metadata and the declared permissions.
+- `term.lus` is the main module. Its header doc comment contains the package metadata and the declared permissions.
+- `term/tokens.lus` splits text into characters and escape sequences and holds the tables of character widths. `term.lus` loads it with `require("term.tokens")`.
 - `tests/*_test.lus` are the tests. They load `term.lus` from the parent of `TEST_DIR`, the directory that holds the test file.
 
 ## Commands
@@ -17,13 +18,13 @@ Run these commands from the root of the repository.
 
 ```sh
 lus test tests          # run the tests
-lus check term.lus     # lint, including the package codes
+lus check term.lus term/tokens.lus  # lint, including the package codes
 lus doc term.lus       # print the reference
 ```
 
 ## Rules
 
 - Every public function has a doc comment that states each result and each error, following `spec/design/style.md` of the Lus repository.
-- The package never calls `pledge`. A new permission is declared in the header and in the README.
+- The package never calls `pledge`. A new permission is declared in the header.
 - Prose follows the `lus-writing` skill, which `lus agents init` installs and https://lus.dev/agents/skills/lus-writing/SKILL.md serves. In particular, prose has no dashes or semicolons and never names the Roblox Lua dialect.
 - Every bug fix comes with a test that fails without it.
